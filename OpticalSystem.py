@@ -1,8 +1,9 @@
-from shwfs import CenteredSquareShackHartmannWavefrontSensorOptics, UncenteredSquareShackHartmannWavefrontSensorOptics
+from shwfs import CenteredSquareShackHartmannWavefrontSensorOptics, UncenteredSquareShackHartmannWavefrontSensorOptics, LocalShackHartmannWavefrontSensorEstimator
 from hcipy import make_pupil_grid, make_obstructed_circular_aperture,evaluate_supersampled, imshow_field, Magnifier
 import matplotlib.pyplot as plt
 from rich.console import Console
 from rich.table import Table
+from scipy import ndimage
 from dataclasses import dataclass
 
 @dataclass
@@ -26,8 +27,8 @@ class ShimmOptic:
         magnification = sensorDim / pupil_grid_diameter       #<-- relacion tamaño del sensor y tamaño de apertura
         self.magnifier = Magnifier(magnification)
 
-        pupil_grid = make_pupil_grid(self.sensorSize, pupil_grid_diameter)
-        self.sensor_grid = make_pupil_grid(self.sensorSize, sensorDim)
+        pupil_grid = make_pupil_grid(self.sensorSize, pupil_grid_diameter)#type: ignore
+        self.sensor_grid = make_pupil_grid(self.sensorSize, sensorDim)#type: ignore
 
         aperture_func = make_obstructed_circular_aperture(self.D_t,
                         self.centralObstruction, num_spiders=0)
@@ -65,6 +66,8 @@ class ShimmOptic:
         else:
           shwfs = UncenteredSquareShackHartmannWavefrontSensorOptics(input_grid=self.sensor_grid,f_number=f_number,num_lenslets=num_lenslets,pupil_diameter=sh_diameter, lam=wavelength)
 
+
+
         console = Console()
         table = Table(title="Shack hartman caracteristicas")
 
@@ -78,6 +81,25 @@ class ShimmOptic:
         console.print(table)
           
         return shwfs
+
+    def estimator(self, shwfs, image):
+
+        shwfse = LocalShackHartmannWavefrontSensorEstimator(shwfs.mla_grid,shwfs.micro_lens_array.mla_index)
+
+        fluxes = ndimage.measurements.sum_labels(image, shwfse.mla_index, shwfse.estimation_subapertures) # type: ignore
+        flux_limit = fluxes.max() * 0.5
+
+        estimation_subapertures = shwfs.mla_grid.zeros(dtype='bool')  
+          
+        indices_validos = shwfse.estimation_subapertures[fluxes > flux_limit].astype(int)  
+        estimation_subapertures[indices_validos] = True    # type: ignore
+
+        shwfse = LocalShackHartmannWavefrontSensorEstimator(shwfs.mla_grid, shwfs.micro_lens_array.mla_index, estimation_subapertures)
+
+        return shwfse
+
+
+
 
 
 

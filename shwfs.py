@@ -1,12 +1,15 @@
 from hcipy import make_rectangular_aperture,\
+                  WavefrontSensorEstimator,\
                   CartesianGrid,\
                   ShackHartmannWavefrontSensorOptics,\
                   WavefrontSensorOptics,OpticalElement,\
                   PhaseApodizer,\
                   AngularSpectrumPropagator,\
                   Field, OpticalSystem,\
-                  SeparatedCoords
+                  SeparatedCoords,closest_points
+
 import numpy as np
+from scipy import ndimage
 
 class shPropagatorTest(WavefrontSensorOptics):
     def __init__(self, input_grid, micro_lens_array):
@@ -40,30 +43,33 @@ class MicroLensArray(OpticalElement):
         self.sh_length = sh_length
         self.mla_grid = lenslet_grid
         self.mla_opd = Field(np.zeros(self.input_grid.size), self.input_grid)  
+        # indices, distances = closest_points(lenslet_grid, input_grid)
+        # self.mla_index = indices
         self.mla_index = Field(-np.ones(self.input_grid.size), self.input_grid)
         self.lam = lam
           
+        index = []
         for i, (x, y) in enumerate(self.mla_grid.as_('cartesian').points):  
 
             shifted_grid = self.input_grid.shifted((x, y))  
             grid_mask = make_rectangular_aperture(self.sh_length)(shifted_grid)
             mask = grid_mask != 0  
-            self.mla_index[mask] = i
+            self.mla_index[mask] = i#type: ignore
 
             # Fase paraxial como OPD  
             r2 = shifted_grid.x**2 + shifted_grid.y**2  
             k = 2*np.pi/self.lam  
             phi = -(k/(2*focal_length)) * r2  
               
-            self.mla_opd[mask] = phi[mask]  
+            self.mla_opd[mask] = phi[mask]  #type: ignore
          
         self.mla_surface = PhaseApodizer(self.mla_opd)
 
     def forward(self, wavefront):
-        return self.mla_surface.forward(wavefront)
+        return self.mla_surface.forward(wavefront)#type: ignore
 
     def backward(self, wavefront):
-        return self.mla_surface.backward(wavefront)
+        return self.mla_surface.backward(wavefront)#type: ignore
 
 
 class CenteredSquareShackHartmannWavefrontSensorOptics(ShackHartmannWavefrontSensorOptics):  
@@ -83,7 +89,7 @@ class CenteredSquareShackHartmannWavefrontSensorOptics(ShackHartmannWavefrontSen
           
         self.micro_lens_array = MicroLensArray(input_grid, self.mla_grid, focal_length,lenslet_diameter,self.lam)  
   
-        shPropagatorTest.__init__(self, input_grid, self.micro_lens_array)
+        shPropagatorTest.__init__(self, input_grid, self.micro_lens_array) #type: ignore
 
 
 class UncenteredSquareShackHartmannWavefrontSensorOptics(ShackHartmannWavefrontSensorOptics):  
@@ -92,11 +98,35 @@ class UncenteredSquareShackHartmannWavefrontSensorOptics(ShackHartmannWavefrontS
         lenslet_diameter = float(pupil_diameter) / num_lenslets  
         print(lenslet_diameter)
           
-        x = np.arange(-pupil_diameter, pupil_diameter, lenslet_diameter)
+        x = np.arange(-pupil_diameter/2, pupil_diameter/2+lenslet_diameter, lenslet_diameter)
         self.mla_grid = CartesianGrid(SeparatedCoords((x, x)))  
 
         focal_length = f_number * lenslet_diameter   
           
         self.micro_lens_array = MicroLensArray(input_grid, self.mla_grid, focal_length,lenslet_diameter,self.lam)  
   
-        shPropagatorTest.__init__(self, input_grid, self.micro_lens_array)
+        shPropagatorTest.__init__(self, input_grid, self.micro_lens_array)#type: ignore
+
+
+class LocalShackHartmannWavefrontSensorEstimator(WavefrontSensorEstimator):
+    def __init__(self, mla_grid, mla_index, estimation_subapertures=None):
+        self.mla_grid = mla_grid
+        self.mla_index = mla_index
+        if estimation_subapertures is None:
+            self.estimation_subapertures = np.unique(self.mla_index)
+        else:
+            self.estimation_subapertures = np.flatnonzero(np.array(estimation_subapertures))
+        self.estimation_grid = self.mla_grid.subset(estimation_subapertures)
+
+    def estimate(self, images):
+        image = images[0]
+
+        fluxes = ndimage.measurements.sum_labels(image, self.mla_index, self.estimation_subapertures)#type: ignore
+        sum_x = ndimage.measurements.sum_labels(image * image.grid.x, self.mla_index, self.estimation_subapertures)#type: ignore
+        sum_y = ndimage.measurements.sum_labels(image * image.grid.y, self.mla_index, self.estimation_subapertures)#type: ignore
+
+        centroid_x = sum_x / fluxes
+        centroid_y = sum_y / fluxes
+
+        centroids = np.array((centroid_x, centroid_y)) 
+        return Field(centroids, self.estimation_grid)
