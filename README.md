@@ -43,7 +43,7 @@ El objetivo principal del simulador es servir como entorno de prueba para:
 | `atmosfera.py` | Implementa herramientas para generar pantallas de fase Von Kármán, evolución temporal de turbulencia y transformaciones espaciales. |
 | `shwfs.py` | Define componentes ópticos asociados a arreglos de microlentes y sensores Shack-Hartmann centrados o no centrados. |
 | `Test.ipynb` | Notebook de pruebas y experimentación del simulador. |
-| `hcipy.ipynb` | Notebook relacionado con pruebas usando HCIPy. |
+| `Shimm.ipynb` | Notebook relacionado a simulacion utilizando HCIPy y otras librerias. |
 | `LICENSE` | Licencia MIT del proyecto. |
 
 ## 🧠 Conceptos utilizados
