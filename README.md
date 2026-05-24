@@ -88,3 +88,4 @@ Clonar el repositorio:
 ```bash
 git clone https://github.com/max005500/OpticalSimulator.git
 cd OpticalSimulator
+pip install -r requeriments.txt
