@@ -244,7 +244,7 @@ class InfiniteVonKarman(LocalAtmosphere):
     def __init__(self, input_grid, fps: int, Cn_squared=None,
                  L0=25, l0=0.01, speed=0., height=0.,
                  direction=0., seed=None, N=256, D_tel=0.5,
-                 reference_wavelength=500e-9):
+                 reference_wavelength=500e-9, reference_OPD=None):
 
         self.fps = fps
         self.l0 = l0
@@ -254,6 +254,7 @@ class InfiniteVonKarman(LocalAtmosphere):
         self.speed = speed
         self.L0 = L0
         self.reference_wavelength = reference_wavelength
+        self.reference_OPD = reference_OPD
 
         if Cn_squared is None:
             raise ValueError("Cn_squared no puede ser None si quieres calcular r0.")
@@ -302,7 +303,8 @@ class InfiniteVonKarman(LocalAtmosphere):
             wind_speed=self.speed,
             wind_dir_deg=self.direction,
             fps=self.fps,
-            seed=seed
+            seed=seed,
+            init_phase=self.reference_OPD
         )
 
     def phase_for(self, wavelength):

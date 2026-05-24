@@ -43,10 +43,12 @@ class MicroLensArray(OpticalElement):
         self.sh_length = sh_length
         self.mla_grid = lenslet_grid
         self.mla_opd = Field(np.zeros(self.input_grid.size), self.input_grid)  
-        # indices, distances = closest_points(lenslet_grid, input_grid)
+        # indices, r2 = closest_points(lenslet_grid, input_grid)
         # self.mla_index = indices
         self.mla_index = Field(-np.ones(self.input_grid.size), self.input_grid)
         self.lam = lam
+        # k = 2*np.pi/self.lam  
+        # self.mla_opd = -(k/(2*focal_length)) * r2**2  
           
         index = []
         for i, (x, y) in enumerate(self.mla_grid.as_('cartesian').points):  
@@ -118,15 +120,49 @@ class LocalShackHartmannWavefrontSensorEstimator(WavefrontSensorEstimator):
             self.estimation_subapertures = np.flatnonzero(np.array(estimation_subapertures))
         self.estimation_grid = self.mla_grid.subset(estimation_subapertures)
 
-    def estimate(self, images):
+    def estimate(self, images, threshold = 0.0):
         image = images[0]
+        min_threshold = 0.0
 
-        fluxes = ndimage.measurements.sum_labels(image, self.mla_index, self.estimation_subapertures)#type: ignore
-        sum_x = ndimage.measurements.sum_labels(image * image.grid.x, self.mla_index, self.estimation_subapertures)#type: ignore
-        sum_y = ndimage.measurements.sum_labels(image * image.grid.y, self.mla_index, self.estimation_subapertures)#type: ignore
+        # Máximo local dentro de cada subapertura
+        local_max = ndimage.maximum(
+            image,
+            labels=self.mla_index,
+            index=self.estimation_subapertures
+        )
+
+        # Threshold local para cada subapertura
+        local_thresholds = np.maximum(
+            threshold * local_max,
+            min_threshold
+        )
+
+
+        # Mapa label -> threshold
+        threshold_by_label = np.zeros(int(self.mla_index.max()) + 1, dtype=float)
+        threshold_by_label[self.estimation_subapertures] = local_thresholds
+
+        # Threshold por píxel
+        threshold_map = threshold_by_label[self.mla_index.astype("int")]
+
+
+        valid_mask = np.isin(self.mla_index, self.estimation_subapertures)
+
+        # Imagen thresholded
+        img_thr = np.where(
+            valid_mask,
+            np.maximum(image - threshold_map, 0),
+            0
+        )
+
+        fluxes = ndimage.measurements.sum_labels(img_thr, self.mla_index, self.estimation_subapertures)#type: ignore
+        sum_x = ndimage.measurements.sum_labels(img_thr * image.grid.x, self.mla_index, self.estimation_subapertures)#type: ignore
+        sum_y = ndimage.measurements.sum_labels(img_thr * image.grid.y, self.mla_index, self.estimation_subapertures)#type: ignore
 
         centroid_x = sum_x / fluxes
         centroid_y = sum_y / fluxes
 
+        # centroids = np.array((centroid_x, centroid_y)) - np.array(self.mla_grid.points[self.estimation_subapertures, :]).T
         centroids = np.array((centroid_x, centroid_y)) 
-        return Field(centroids, self.estimation_grid)
+        
+        return Field(centroids, self.estimation_grid), Field(fluxes, self.estimation_grid), Field(img_thr,image.grid)
