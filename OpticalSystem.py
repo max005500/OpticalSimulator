@@ -207,7 +207,7 @@ class ShimmOptic:
         return psf, pcov2, pcov 
 
     def NoislessCamera(self):
-        return NoiselessDetector(self.sensor_grid )
+        return NoiselessDetector(self.sensor_grid)
 
     def ZWOCamera(self):
         return NoisyDetector(self.sensor_grid,read_noise=7)

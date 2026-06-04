@@ -1,11 +1,21 @@
-from hcipy import OpticalElement, fried_parameter_from_Cn_squared, Field, AngularSpectrumPropagator
 import numpy as np
+import torch
+from hcipy import (
+    AngularSpectrumPropagator,
+    Field,
+    FresnelPropagator,
+    OpticalElement,
+    fried_parameter_from_Cn_squared,
+)
+from hcipy.atmosphere.standard_atmosphere import MultiLayerAtmosphere
+
 from atmosfera import InfiniteVonKarmanPhaseScreenGenerator
 
 
 class LocalAtmosphere(OpticalElement):
-    def __init__(self, input_grid, Cn_squared=None, L0=np.inf,
-                  height=0., direction=0.):
+    def __init__(
+        self, input_grid, Cn_squared=None, L0=np.inf, height=0.0, direction=0.0
+    ):
 
         self.input_grid = input_grid
 
@@ -19,15 +29,14 @@ class LocalAtmosphere(OpticalElement):
         self.height = height
 
     def evolve(self):
-        '''Evolve the atmospheric layer until time `t`.
+        """Evolve the atmospheric layer until time `t`.
 
         Parameters
         ----------
         t : scalar
             The time to which to evolve the atmospheric layer.
-        '''
+        """
         raise NotImplementedError()
-
 
     @property
     def Cn_squared(self):
@@ -60,7 +69,7 @@ class LocalAtmosphere(OpticalElement):
     @velocity.setter
     def velocity(self, velocity):
         if np.isscalar(velocity):
-            self._velocity = np.array([velocity, 0.])
+            self._velocity = np.array([velocity, 0.0])
         else:
             self._velocity = np.array(velocity, dtype=float)
 
@@ -83,7 +92,7 @@ class LocalAtmosphere(OpticalElement):
 
 
 class LocalMultiLayerAtmosphere(OpticalElement):
-    '''A multi-layer atmospheric model.
+    """A multi-layer atmospheric model.
 
     This :class:`OpticalElement` can model turbulence and scintillation effects
     due to atmospheric turbulence by propagating light through a series of
@@ -98,12 +107,14 @@ class LocalMultiLayerAtmosphere(OpticalElement):
     scintillation : bool
         If True, then the distance between two phase screens is propagated using
         a :class:`FresnelPropagator`. Otherwise, no propagator will be used.
-    '''
+    """
+
     def __init__(self, layers, scintillation=False, scintilation=None):
         # Retain backwards compatibility.
         if scintilation is not None:
             import warnings
-            warnings.warn('Please use the correct spelling for scintillation.')
+
+            warnings.warn("Please use the correct spelling for scintillation.")
 
             scintillation = scintilation
 
@@ -114,11 +125,11 @@ class LocalMultiLayerAtmosphere(OpticalElement):
         self.calculate_propagators()
 
     def calculate_propagators(self):
-        '''Recalculates the list of optical elements used for a propagation.
+        """Recalculates the list of optical elements used for a propagation.
 
         This function is called automatically by other functions, but a recalculation
         can be forced by calling it explicitly.
-        '''
+        """
         heights = np.array([l.height for l in self.layers])
         layer_indices = np.argsort(-heights)
 
@@ -127,7 +138,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
         grid = self.layers[0].input_grid
 
         if self.scintillation:
-            propagators = [AngularSpectrumPropagator(grid, h) for h in delta_heights]
+            propagators = [FresnelPropagator(grid, h) for h in delta_heights]
 
         self.elements = []
         for i, j in enumerate(layer_indices):
@@ -136,7 +147,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
                 self.elements.append(propagators[i])
 
         if self.scintillation and sorted_heights[-1] > 0:
-            self.elements.append(AngularSpectrumPropagator(grid, sorted_heights[-1]))
+            self.elements.append(FresnelPropagator(grid, sorted_heights[-1]))
 
         self._dirty = False
 
@@ -146,8 +157,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
 
     @property
     def layers(self):
-        '''A list of :class:`AtmosphericLayer` objects.
-        '''
+        """A list of :class:`AtmosphericLayer` objects."""
         return self._layers
 
     @layers.setter
@@ -156,7 +166,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
         self._dirty = True
 
     def phase_for(self, wavelength):
-        '''Get the unwrapped phase in radians for the atmosphere.
+        """Get the unwrapped phase in radians for the atmosphere.
 
         Parameters
         ----------
@@ -167,9 +177,11 @@ class LocalMultiLayerAtmosphere(OpticalElement):
         -------
         Field
             The total unwrapped phase screen.
-        '''
+        """
         if self.scintillation:
-            raise ValueError('Cannot get the unwrapped phase for an atmosphere with scintillation.')
+            raise ValueError(
+                "Cannot get the unwrapped phase for an atmosphere with scintillation."
+            )
 
         unwrapped_phases = [layer.phase_for(wavelength) for layer in self.layers]
 
@@ -177,8 +189,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
 
     @property
     def scintillation(self):
-        '''Whether to include scintillation effects in the propagation.
-        '''
+        """Whether to include scintillation effects in the propagation."""
         return self._scintillation
 
     @scintillation.setter
@@ -187,20 +198,19 @@ class LocalMultiLayerAtmosphere(OpticalElement):
         self._scintillation = scintillation
 
     def evolve(self):
-        '''Evolve all atmospheric layers to a time t.
+        """Evolve all atmospheric layers to a time t.
 
         Parameters
         ----------
         t : scalar
             The time to which to evolve the atmospheric layers.
-        '''
+        """
         for l in self.layers:
             l.evolve()
 
     @property
     def Cn_squared(self):  # noqa: N802
-        '''The total Cn^2 value of the simulated atmosphere.
-        '''
+        """The total Cn^2 value of the simulated atmosphere."""
         return np.sum([l.Cn_squared for l in self.layers])
 
     @Cn_squared.setter
@@ -211,8 +221,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
 
     @property
     def outer_scale(self):
-        '''The outer scale of all layers.
-        '''
+        """The outer scale of all layers."""
         return self.layers[0].outer_scale
 
     @outer_scale.setter
@@ -239,12 +248,23 @@ class LocalMultiLayerAtmosphere(OpticalElement):
         return wf
 
 
-
 class InfiniteVonKarman(LocalAtmosphere):
-    def __init__(self, input_grid, fps: int, Cn_squared=None,
-                 L0=25, l0=0.01, speed=0., height=0.,
-                 direction=0., seed=None, N=256, D_tel=0.5,
-                 reference_wavelength=500e-9, reference_OPD=None):
+    def __init__(
+        self,
+        input_grid,
+        fps: int,
+        Cn_squared=None,
+        L0=25,
+        l0=0.01,
+        speed=0.0,
+        height=0.0,
+        direction=0.0,
+        seed=None,
+        N=256,
+        D_tel=0.5,
+        reference_wavelength=500e-9,
+        reference_OPD=None,
+    ):
 
         self.fps = fps
         self.l0 = l0
@@ -260,8 +280,7 @@ class InfiniteVonKarman(LocalAtmosphere):
             raise ValueError("Cn_squared no puede ser None si quieres calcular r0.")
 
         self.r0 = fried_parameter_from_Cn_squared(
-            Cn_squared,
-            wavelength=reference_wavelength
+            Cn_squared, wavelength=reference_wavelength
         )
 
         super().__init__(
@@ -269,7 +288,7 @@ class InfiniteVonKarman(LocalAtmosphere):
             Cn_squared=Cn_squared,
             L0=L0,
             height=height,
-            direction=direction
+            direction=direction,
         )
 
         self.reset()
@@ -292,7 +311,7 @@ class InfiniteVonKarman(LocalAtmosphere):
 
     def reset(self, make_independent_realization=False):
         seed = None if make_independent_realization else self.seed
-
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.dyn = InfiniteVonKarmanPhaseScreenGenerator(
             N=self.N,
@@ -304,7 +323,8 @@ class InfiniteVonKarman(LocalAtmosphere):
             wind_dir_deg=self.direction,
             fps=self.fps,
             seed=seed,
-            init_phase=self.reference_OPD
+            init_phase=self.reference_OPD,
+            device=device,
         )
 
     def phase_for(self, wavelength):

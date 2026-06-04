@@ -3,14 +3,17 @@ import torch
 import skimage.transform as sk
 import numpy as np
 from scipy import linalg
+from scipy.spatial.distance import cdist
 from scipy.special import kv, gamma
 import torch.nn.functional as F
 from aotools.turbulence import ft_sh_phase_screen
 import numpy as np
 from dataclasses import dataclass
 import torch
+import time
+import matplotlib.pyplot as plt
 
-def translationImageMatrix(image,shift):
+def translationImageMatrix(shift):
     # translate the image with the corresponding shift value
     tf_shift = sk.SimilarityTransform(translation=shift)    
     return tf_shift
@@ -18,12 +21,6 @@ def translationImageMatrix(image,shift):
 def globalTransformation(image,shiftMatrix,order=3):
         output  = sk.warp(image,(shiftMatrix).inverse,order=order)
         return output
-
-def bsxfunMinus(a,b):      
-    A =np.tile(a[...,None],len(b))
-    B =np.tile(b[...,None],len(a))
-    out = A-B.T
-    return out
 
 # Exact von Kármán covariance (as in AOTools)
 def turb_phase_covariance(r, r0, L0):
@@ -62,6 +59,7 @@ class InfiniteVonKarmanPhaseScreenGenerator:
 
         # Persistent RNG on correct device
         self._rng = torch.Generator(device=self.device)
+
         if self.seed is not None:
             self._rng.manual_seed(self.seed)
 
@@ -74,12 +72,15 @@ class InfiniteVonKarmanPhaseScreenGenerator:
             self.OPD = ft_sh_phase_screen(self.r0,self.N,self.D_tel/self.N,self.L0,self.l0, seed=self.seed) 
 
         vy = self.wind_speed * np.cos(np.deg2rad(self.wind_dir_deg))
-        samplingTiem = 1/self.fps
         vx = self.wind_speed * np.sin(np.deg2rad(self.wind_dir_deg))
+
+        samplingTiem = 1/self.fps
+
         self.ps_turb_x = samplingTiem * vx
         self.ps_turb_y = samplingTiem * vy
 
         ext_size = self.N + self.n_extra_pixel 
+
         # Outer ring of pixel for the phase screens update
         self.outerMask = np.ones(
                             [ext_size,ext_size],
@@ -98,15 +99,16 @@ class InfiniteVonKarmanPhaseScreenGenerator:
             1 + self.n_extra_pixel : -1 - self.n_extra_pixel,
             1 + self.n_extra_pixel : -1 - self.n_extra_pixel
             ] = False
+
         x = np.linspace(0, self.N+1, self.N + 2) * self.D_tel/(self.N-1)
         u, v = np.meshgrid(x, x)
 
-        innerZ = u[self.innerMask != 0] + 1j*v[self.innerMask != 0]
-        outerZ = u[self.outerMask != 0] + 1j*v[self.outerMask != 0]
+        inner_coords = np.column_stack([u[self.innerMask != 0], v[self.innerMask != 0]])
+        outer_coords = np.column_stack([u[self.outerMask != 0], v[self.outerMask != 0]])
 
-        self.rho0 = np.abs(bsxfunMinus(innerZ, innerZ))
-        self.rho1 = np.abs(bsxfunMinus(innerZ, outerZ))
-        self.rho2 = np.abs(bsxfunMinus(outerZ, outerZ))
+        self.rho0 = cdist(inner_coords, inner_coords)
+        self.rho1 = cdist(inner_coords, outer_coords)
+        self.rho2 = cdist(outer_coords, outer_coords)
 
         # Build A/B matrices (NumPy)
         self._build_ab_matrices()
@@ -134,7 +136,6 @@ class InfiniteVonKarmanPhaseScreenGenerator:
         self.notDoneOnce = True
 
     def _build_ab_matrices(self):
-        coords = np.column_stack(np.where(self.innerMask))
         Czz = turb_phase_covariance(self.rho0,self.r0,self.L0)
         print("czz")
         Czx = turb_phase_covariance(self.rho1,self.r0,self.L0)
@@ -142,22 +143,22 @@ class InfiniteVonKarmanPhaseScreenGenerator:
         Cxz = Czx.T
         Cxx = turb_phase_covariance(self.rho2,self.r0,self.L0)
         print("cxx")
-        n = coords.shape[0]
 
-        try:
-            cf = linalg.cho_factor(Czz) 
-            invCzz = linalg.cho_solve(cf, np.eye(n))
-        except linalg.LinAlgError:
-            invCzz = np.linalg.pinv(Czz)
+        Czz_torch = torch.from_numpy(Czz).to(self.device)
+        ide = torch.from_numpy(np.identity(Czz.shape[0])).to(self.device)
+        invCzz_torch = torch.linalg.lstsq(Czz_torch, ide).solution
+        invCzz = invCzz_torch.detach().cpu().numpy()
 
         self.A_mat = Cxz.dot(invCzz)
         BBt = Cxx - self.A_mat.dot(Czx)
+
         U, W, _ = np.linalg.svd(BBt)
         self.B_mat = U.dot(np.diag(np.sqrt(W)))
 
+
     def add_row(self,stepInPixel):
         map_full = self.mapShift
-        shiftMatrix = translationImageMatrix(map_full, [stepInPixel[0], stepInPixel[1]])  # units are in pixel of the M1
+        shiftMatrix = translationImageMatrix([stepInPixel[0], stepInPixel[1]])  # units are in pixel of the M1
         tmp = globalTransformation(map_full, shiftMatrix)
         onePixelShiftedPhaseScreen = tmp[1:-1, 1:-1]
 
@@ -220,13 +221,14 @@ class InfiniteVonKarmanPhaseScreenGenerator:
         self.buff[0] = (np.abs(self.buff[0]) % 1)*np.sign(self.buff[0])
         self.buff[1] = (np.abs(self.buff[1]) % 1)*np.sign(self.buff[1])
 
-        shiftMatrix = translationImageMatrix(
-           self.mapShift, [self.buff[0], self.buff[1]])  # units are in pixel of the M1
+        shiftMatrix = translationImageMatrix([self.buff[0], self.buff[1]])  # units are in pixel of the M1
 
         self.OPD = globalTransformation(
         self.mapShift, shiftMatrix)[1:-1, 1:-1]
         return self.OPD
-# === Von Kármán Phase Screen Generator ===
+
+
+# === kolmogorov based ===
 class KolmogorovGenerator:
     def __init__(self, N=128, D_tel=1, r0=0.1, L0=25, l0=0.01,pupil_mask=None, wavelength=None, batch_size=1, device='cuda', seed=None):
         self.device = device
