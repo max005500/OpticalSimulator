@@ -58,7 +58,8 @@ class ShimmOptic:
         self.aperture = evaluate_supersampled(aperture_func, self.pupil_grid, 4)
         self.aperture = evaluate_supersampled(aperture_func, self.pupil_grid, 4)
 
-        self.m2r = (
+        self.m2r = magnification / self.focal_length  # <-- conversion a rad
+        self.m2Arc = (
             (magnification / (self.focal_length)) * (180 / np.pi) * 3600
         )  # <-- conversion a Arcsec
 
