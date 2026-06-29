@@ -4,12 +4,13 @@ from hcipy import (
     AngularSpectrumPropagator,
     Field,
     FresnelPropagator,
+    MultiLayerAtmosphere,
     OpticalElement,
     fried_parameter_from_Cn_squared,
 )
 from hcipy.atmosphere.standard_atmosphere import MultiLayerAtmosphere
 
-from atmosfera import InfiniteVonKarmanPhaseScreenGenerator
+from atmosfera import InfinitePhaseScreenGenerator
 
 
 class LocalAtmosphere(OpticalElement):
@@ -138,7 +139,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
         grid = self.layers[0].input_grid
 
         if self.scintillation:
-            propagators = [FresnelPropagator(grid, h) for h in delta_heights]
+            propagators = [AngularSpectrumPropagator(grid, h) for h in delta_heights]
 
         self.elements = []
         for i, j in enumerate(layer_indices):
@@ -147,7 +148,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
                 self.elements.append(propagators[i])
 
         if self.scintillation and sorted_heights[-1] > 0:
-            self.elements.append(FresnelPropagator(grid, sorted_heights[-1]))
+            self.elements.append(AngularSpectrumPropagator(grid, sorted_heights[-1]))
 
         self._dirty = False
 
@@ -236,6 +237,7 @@ class LocalMultiLayerAtmosphere(OpticalElement):
         wf = wavefront.copy()
         for el in self.elements:
             wf = el.forward(wf)
+
         return wf
 
     def backward(self, wavefront):
@@ -264,8 +266,11 @@ class InfiniteVonKarman(LocalAtmosphere):
         D_tel=0.5,
         reference_wavelength=500e-9,
         reference_OPD=None,
+        n_extra_pixels=2,
+        device="cpu",
     ):
 
+        self.start = False
         self.fps = fps
         self.l0 = l0
         self.seed = seed
@@ -275,7 +280,8 @@ class InfiniteVonKarman(LocalAtmosphere):
         self.L0 = L0
         self.reference_wavelength = reference_wavelength
         self.reference_OPD = reference_OPD
-
+        self.device = device
+        self.n_extra_pixels = n_extra_pixels
         if Cn_squared is None:
             raise ValueError("Cn_squared no puede ser None si quieres calcular r0.")
 
@@ -292,6 +298,7 @@ class InfiniteVonKarman(LocalAtmosphere):
         )
 
         self.reset()
+        self.start = True
 
     @property
     def Cn_squared(self):
@@ -309,11 +316,41 @@ class InfiniteVonKarman(LocalAtmosphere):
     def outer_scale(self, L0):
         self._outer_scale = L0
 
+    @property
+    def speed(self):
+        return self._speed
+
+    @speed.setter
+    def speed(self, val):
+        self._speed = val
+        if self.start:
+            self.dyn.wind_speed = val
+
+    @property
+    def direction(self):
+        return self._direction
+
+    @direction.setter
+    def direction(self, val):
+        self._direction = val
+        if self.start:
+            self.dyn.wind_dir_deg = val
+
+    @outer_scale.setter
+    def outer_scale(self, L0):
+        self._outer_scale = L0
+
+    def update_cn2(self, val):
+        self.Cn_squared = val
+        self.r0 = fried_parameter_from_Cn_squared(
+            val, wavelength=self.reference_wavelength
+        )
+        self.dyn.update_r0(self.r0)
+
     def reset(self, make_independent_realization=False):
         seed = None if make_independent_realization else self.seed
-        device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.dyn = InfiniteVonKarmanPhaseScreenGenerator(
+        self.dyn = InfinitePhaseScreenGenerator(
             N=self.N,
             D_tel=self.D_tel,
             r0=self.r0,
@@ -324,7 +361,8 @@ class InfiniteVonKarman(LocalAtmosphere):
             fps=self.fps,
             seed=seed,
             init_phase=self.reference_OPD,
-            device=device,
+            device=self.device,
+            n_extra_pixel=self.n_extra_pixels,
         )
 
     def phase_for(self, wavelength):
