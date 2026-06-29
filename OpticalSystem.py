@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
-from covariances import weighting_function
 from hcipy import (
     Magnifier,
     NoiselessDetector,
@@ -15,6 +14,8 @@ from hcipy import (
 from rich.console import Console
 from rich.table import Table
 from scipy import ndimage
+
+from covariances import weighting_function
 from shwfs import (
     CenteredSquareShackHartmannWavefrontSensorOptics,
     LocalShackHartmannWavefrontSensorEstimator,
@@ -128,7 +129,7 @@ class ShimmOptic:
 
         return shwfs
 
-    def estimator(self, shwfs, image):
+    def estimator(self, shwfs, image, percentaje=0.9):
 
         shwfse = LocalShackHartmannWavefrontSensorEstimator(
             shwfs.mla_grid, shwfs.micro_lens_array.mla_index
@@ -137,7 +138,7 @@ class ShimmOptic:
         fluxes = ndimage.measurements.sum_labels(
             image, shwfse.mla_index, shwfse.estimation_subapertures
         )  # type: ignore
-        flux_limit = fluxes.max() * 0.9
+        flux_limit = fluxes.max() * percentaje
 
         estimation_subapertures = shwfs.mla_grid.zeros(dtype="bool")
 
