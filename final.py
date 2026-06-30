@@ -14,24 +14,23 @@ from matplotlib import animation
 %matplotlib inline
 newconf = Configuration()
 newconf.update({'core':{"use_new_style_fields":True}})
-print(Configuration())
 # %%
 
-telescope_diameter = 0.28          # diametro telescopio en metros
+telescope_diameter = 0.5          # diametro telescopio en metros
 central_obscuration_ratio = 0.34   # obstrucción central
 # central_obscuration_ratio = 0.   # obstrucción central
-pixel_size = 4*2.9e-6              # Tamaño del pixel camara ZWO con bining * 4
-telescope_fnumber = 10             # El de Seetrue es 6.8
-fach = 30e-3                       # El nuestro es 25.4
-sensorSize = 258                   # Roi del sensor al arreglo de microlentes
-focal_length = 15.4e-3             #<-- shack Hartmann focal length
+pixel_size = 3*5e-6               # Tamaño del pixel camara ZWO con bining * 4
+telescope_fnumber = 6.8             # El de Seetrue es 6.8
+fach = (25.4e-3)*(35/48)                    # El nuestro es 25.4
+sensorSize = 500/3                   # Roi del sensor al arreglo de microlentes
+focal_length = 32.8e-3             #<-- shack Hartmann focal length
 
 Shimm = ShimmOptic(telescope_diameter,
                    central_obscuration_ratio,
                    fach,
                    pixel_size,
                    sensorSize,
-                   SHcentered=True, #<-- Shack-Hartmann centrado o no. Nota: El nuestro de 7 no esta centrado
+                   SHcentered=False, #<-- Shack-Hartmann centrado o no. Nota: El nuestro de 7 no esta centrado
                    telescope_fnumber=telescope_fnumber,
                    focal_length=focal_length)
 
@@ -78,32 +77,35 @@ plt.colorbar()
 %matplotlib qt
 
 num_lenslets = 20                                       #<-- Numero de lenslets en Shack-Hartmann
-lenslet_diameter = 0.5e-3                               #<-- Diametro de cada sub-apertura
-nsubx = 6
+lenslet_diameter = (0.5e-3)*(35/48)                            #<-- Diametro de cada sub-apertura
+nsubx = 7
 shwfs = Shimm.ShackHartman(lenslet_diameter,num_lenslets,focal_length,wavelength) #<-- Definicion de Shack-Hartmann
 magnifier = Shimm.magnifier                             #<-- Magnificador: Es la relacion Focal_acromatico/focal_telescopio
+# mag2 = Magnifier(35/45)
 
-camera = Shimm.IRCamera()
-image = camera.integrate(shwfs(magnifier(wf)),2e-3)
+camera = Shimm.NoislessCamera()
+image = camera.integrate(shwfs(magnifier(wf)),128e-3)
 image_ref = camera.read_out()
 
-shwfse = Shimm.estimator(shwfs,image_ref,0.75)               #<-- Estimador con algoritmo de centro de gravedad con umbral
+shwfse = Shimm.estimator(shwfs,image_ref,0.9)               #<-- Estimador con algoritmo de centro de gravedad con umbral
 slope_ref ,flux ,_ = shwfse.estimate([image_ref]) #<--intensidades por sub-apertura y ubicacion de centroides en metros
 
+# camera = Shimm.IRCameraObs()
 
 #=======================
 # Shack-Hartmann con centroides detectados
 #=======================
 
 plt.figure()
-imshow_psf(image_ref,scale="linear",normalization="peak", cmap="gray", vmin=0, vmax=0.01)
+# imshow_psf(image_ref,scale="linear",normalization="peak", cmap="gray")
+imshow_field(image_ref,cmap="gray")
 plt.plot(slope_ref[0,:],slope_ref[1,:],".",color="r")# type: ignore
 plt.xlabel("X position [m]")
 plt.ylabel("y position [m]")
 plt.title("Shack-Hartmann Wavefront sensor")
 
 # %%
-F = 600
+F = 60
 T = 1/F
 glob_cn = fried_parameter_from_Cn_squared(np.sum(cn[0,:]), wavelength=wavelength)
 print(glob_cn)
@@ -111,7 +113,6 @@ print(glob_cn)
 #============================
 # Pantalla de fase Basada en OOPAO
 #============================
-
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
 device = "cpu"
@@ -127,7 +128,7 @@ layer1 = InfiniteVonKarman(input_grid=Shimm.pupil_grid,
                           l0=1e-20,
                           speed=6,#<-- velocidad
                           D_tel=telescope_diameter,
-                          N = Shimm.sensorSize,
+                          N = int(Shimm.sensorSize),
                           )
 
 layer2 = InfiniteVonKarman(input_grid=Shimm.pupil_grid,
@@ -142,7 +143,7 @@ layer2 = InfiniteVonKarman(input_grid=Shimm.pupil_grid,
                           speed=5,             #<-- velocidad
                           device=device,
                           D_tel=telescope_diameter * Shimm.oversizing_factor,
-                          N = Shimm.sensorSize)
+                          N = int(Shimm.sensorSize))
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
 layer3 = InfiniteVonKarman(input_grid=Shimm.pupil_grid,
@@ -157,10 +158,10 @@ layer3 = InfiniteVonKarman(input_grid=Shimm.pupil_grid,
                           l0=1e-20,
                           speed=5,#<-- velocidad
                           D_tel=telescope_diameter* Shimm.oversizing_factor,
-                          N = Shimm.sensorSize)
+                          N =int( Shimm.sensorSize))
 
 layer4 = InfiniteVonKarman(input_grid=Shimm.pupil_grid,
-                          height=19e3,
+                          height=20e3,
                           reference_wavelength=wavelength,
                           Cn_squared=cn[0,3],
                           direction=90,
@@ -171,7 +172,7 @@ layer4 = InfiniteVonKarman(input_grid=Shimm.pupil_grid,
                           speed=5,
                           device=device,
                           D_tel=telescope_diameter* Shimm.oversizing_factor,
-                          N = Shimm.sensorSize)
+                          N =int( Shimm.sensorSize))
 
 # =======================================================
 # Propagar pantallas de fase mediante angular spectrum
@@ -209,9 +210,9 @@ steps = F*30
 #  Matrices de autocovarianza
 #============================
 
-matx = np.zeros([steps, 20])
-maty = np.zeros([steps, 20])
-matf = np.zeros([steps, 20])
+matx = np.zeros([steps, 28])
+maty = np.zeros([steps, 28])
+matf = np.zeros([steps, 28])
 
 count = 0
 #=======================
@@ -274,32 +275,26 @@ for t in tqdm(range(1, steps)):
                 layer4.speed -= 2
             atm = LocalMultiLayerAtmosphere([layer1,layer2,layer3,layer4],scintillation=True) #<--- atmosfera multicapa
 
-       if t % (F*3) == 0 :
-          count = np.random.randint(0, 2000)
-          layer1.update_cn2(cn[count,0])
-          layer2.update_cn2(cn[count,1])
-          layer3.update_cn2(cn[count,2])
-          layer4.update_cn2(cn[count,3])
-          cns.append(count)
-          glob_cn = fried_parameter_from_Cn_squared(np.sum(cn[count,:]), wavelength=wavelength)
-          print(glob_cn)
-          atm = LocalMultiLayerAtmosphere([layer1,layer2,layer3,layer4],scintillation=True) #<--- atmosfera multicapa
 # %%
-steps = F*3*800
+steps = F*30
 
 #============================
 #  Matrices de autocovarianza
 #============================
 
-matx1 = np.zeros([steps, 20])
-maty1 = np.zeros([steps, 20])
-matf1 = np.zeros([steps, 20])
+matx1 = np.zeros([steps, len(slope_ref[0,:])])
+maty1 = np.zeros([steps, len(slope_ref[0,:])])
+matf1 = np.zeros([steps, len(slope_ref[0,:])])
+print(matx1.shape)
 
 count = 0
 #=======================
 # Adquicision de datos
 #=======================
-
+layer1.speed = 8
+layer2.speed = 8
+layer3.speed = 8
+layer4.speed = 8
 layer1.update_cn2(cn[count,0])
 layer2.update_cn2(cn[count,1])
 layer3.update_cn2(cn[count,2])
@@ -320,7 +315,7 @@ for t in tqdm(range(steps)):
 
     atm.evolve()
     if t % F == 0:
-        layer1.speed += np.random.randint(-2,2)
+        layer1.speed += np.random.randint(-1,1)
         layer1.direction += np.random.randint(-30,30)
 
         if layer1.speed == 0:
@@ -331,7 +326,7 @@ for t in tqdm(range(steps)):
             print(layer1.speed)
 
         layer2.direction += np.random.randint(-30,30)
-        layer2.speed += np.random.randint(-3,3)
+        layer2.speed += np.random.randint(-1,1)
 
         if layer2.speed == 0:
             layer2.speed += 3
@@ -342,7 +337,7 @@ for t in tqdm(range(steps)):
             print(layer2.speed)
 
         layer3.direction += np.random.randint(-30,30)
-        layer3.speed += np.random.randint(-2,2)
+        layer3.speed += np.random.randint(-1,1)
 
         if layer3.speed == 0:
             layer3.speed += 3
@@ -353,7 +348,7 @@ for t in tqdm(range(steps)):
             print(layer3.speed)
 
         layer4.direction += np.random.randint(-30,30)
-        layer4.speed += np.random.randint(-2,2)
+        layer4.speed += np.random.randint(-1,1)
 
         if layer4.speed == 0:
             layer4.speed += 3
@@ -364,16 +359,6 @@ for t in tqdm(range(steps)):
             print(layer4.speed)
         atm = LocalMultiLayerAtmosphere([layer1,layer2,layer3,layer4],scintillation=True) #<--- atmosfera multicapa
 
-    if t % (F*3) == 0 :
-          layer1.update_cn2(cn[count,0])
-          layer2.update_cn2(cn[count,1])
-          layer3.update_cn2(cn[count,2])
-          layer4.update_cn2(cn[count,3])
-          glob_cn = fried_parameter_from_Cn_squared(np.sum(cn[count,:]), wavelength=wavelength)
-          print(glob_cn)
-          atm = LocalMultiLayerAtmosphere([layer1,layer2,layer3,layer4],scintillation=True) #<--- atmosfera multicapa
-          count += 1
-
 # %%
 def SlopeDenoise(pcov):
     row_mean = pcov.mean(axis=1, keepdims=True)  # (nsubtot,1,2)
@@ -383,34 +368,20 @@ def SlopeDenoise(pcov):
 
 # print(cns)
 # %%
-from scipy.linalg import cholesky, solve_triangular
 flu = np.mean(matf1, axis=0)
 matff = (matf1 - flu) / flu
 
-steps = F*3
 n = 10
 print(steps)
 varianza = steps/n
-v1= np.zeros([n,20])
-v2= np.zeros([n,20])
-v3= np.zeros([n,20])
 print(varianza)
-nn = 1200
+nn = len(slope_ref[0,:])*len(slope_ref[0,:])*3
 b0 = np.zeros([n,nn])
 for i in tqdm(range(n)):
 
-    # v1[i,:] = matx1[int(i*varianza):int((i+1)*varianza),:].std(axis=0, ddof=1)
-    # v2[i,:] = maty1[int(i*varianza):int((i+1)*varianza),:].std(axis=0, ddof=1)
-    # v3[i,:] = matff[int(i*varianza):int((i+1)*varianza),:].std(axis=0, ddof=1)
-
-    inx = SlopeDenoise(np.cov(matx1[int(i*varianza):int((i+1)*varianza),:],rowvar = False)).ravel()
-    iny = SlopeDenoise(np.cov(maty1[int(i*varianza):int((i+1)*varianza),:],rowvar = False)).ravel()
-    # inx = np.cov(matx1[int(i*varianza):int((i+1)*varianza),:],rowvar = False).ravel()
-    # iny = np.cov(maty1[int(i*varianza):int((i+1)*varianza),:],rowvar = False).ravel()
-    # inx = np.cov(matx[int(i*varianza):int((i+1)*varianza),:],rowvar = False).ravel()
-    # iny = np.cov(maty2[int(i*varianza):int((i+1)*varianza),:],rowvar = False).ravel()
+    inx = np.cov((matx1[int(i*varianza):int((i+1)*varianza),:]),rowvar = False).ravel()
+    iny = np.cov((maty1[int(i*varianza):int((i+1)*varianza),:]),rowvar = False).ravel()
     ini = np.cov(matff[int(i*varianza):int((i+1)*varianza),:],rowvar = False).ravel()
-    # ini = ini[~np.eye(ini.shape[0], dtype=bool)]
     b0[i,:] = np.concat([ini,inx,iny])
 # inx = np.cov(v1,rowvar = False).ravel()/ np.sqrt(n)
 # iny = np.cov(v2,rowvar = False).ravel()/ np.sqrt(n)
@@ -427,7 +398,6 @@ for i in tqdm(range(n)):
 
 # sigma = np.cov(b0, rowvar=False, ddof=1)/n
 sigma = b0.std(axis=0, ddof=1)/np.sqrt(n)
-# b = b0.mean(axis=0)
 # sigma = 1/b0
 plt.figure()
 # plt.plot(sigma)
@@ -461,12 +431,13 @@ from scipy.optimize import nnls, lsq_linear
 import matplotlib.pyplot as plt
 
 mask = np.array([
-                [0,0,1,1,0,0],
-                [0,1,1,1,1,0],
-                [1,1,0,0,1,1],
-                [1,1,0,0,1,1],
-                [0,1,1,1,1,0],
-                [0,0,1,1,0,0],
+                [0,0,1,1,1,0,0],
+                [0,1,1,1,1,1,0],
+                [1,1,0,0,0,1,1],
+                [1,1,0,0,0,1,1],
+                [1,1,0,0,0,1,1],
+                [0,1,1,1,1,1,0],
+                [0,0,1,1,1,0,0],
                 ])
 
 cx = pcovx2.ravel()
@@ -479,7 +450,7 @@ b = np.concat([cf,cx,cy])
 tcovs1 = Shimm.TheoricalCov(mask, nsubx, wavelength, h=0e3)
 tcovs2 = Shimm.TheoricalCov(mask, nsubx, wavelength, h=4e3)
 tcovs3 = Shimm.TheoricalCov(mask, nsubx, wavelength, h=12e3)
-tcovs4 = Shimm.TheoricalCov(mask, nsubx, wavelength, h=19e3)
+tcovs4 = Shimm.TheoricalCov(mask, nsubx, wavelength, h=20e3)
 
 psfx1,wx1,tcovx1 = tcovs1["sx"]
 psfx2,wx2,tcovx2 = tcovs2["sx"]
@@ -505,16 +476,11 @@ tcovy1,_ = Shimm.w2cov(psfy1,mask)
 tcovy2,_ = Shimm.w2cov(psfy2,mask)
 tcovy3,_ = Shimm.w2cov(psfy3,mask)
 tcovy4,_ = Shimm.w2cov(psfy4,mask)
-# %%
 
 W0  = np.concat([tcovi1.ravel(), tcovx1.ravel(), tcovy1.ravel()])
 W4  = np.concat([tcovi2.ravel(), tcovx2.ravel(), tcovy1.ravel()])
 W12 = np.concat([tcovi3.ravel(), tcovx3.ravel(), tcovy1.ravel()])
 W20 = np.concat([tcovi4.ravel(), tcovx4.ravel(), tcovy1.ravel()])
-# W0  = np.concat([tcovi1[~np.eye(tcovi1.shape[0], dtype=bool)], tcovx1.ravel(), tcovy1.ravel()])
-# W4  = np.concat([tcovi2[~np.eye(tcovi2.shape[0], dtype=bool)], tcovx2.ravel(), tcovy1.ravel()])
-# W12 = np.concat([tcovi3[~np.eye(tcovi3.shape[0], dtype=bool)], tcovx3.ravel(), tcovy1.ravel()])
-# W20 = np.concat([tcovi4[~np.eye(tcovi4.shape[0], dtype=bool)], tcovx4.ravel(), tcovy1.ravel()])
 
 W = np.column_stack([W0,W4,W12,W20])
 
@@ -529,7 +495,7 @@ sol = lsq_linear(
     E@W_np,
     E@c_np,
     tol=0,
-    bounds=(1e-20, np.inf),
+    bounds=(0, np.inf),
     method="bvls"
 )
 j = sol.x
