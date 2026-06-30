@@ -14,6 +14,8 @@ from hcipy import (
 from rich.console import Console
 from rich.table import Table
 from scipy import ndimage
+from skimage import io
+from skimage.transform import AffineTransform, rotate, warp
 
 from covariances import weighting_function
 from shwfs import (
@@ -284,3 +286,84 @@ class ShimmOptic:
 
     def IRCamera(self):
         return NoisyDetector(self.sensor_grid, dark_current_rate=640, read_noise=37)
+
+    def IRCameraObs(self):
+        return NoisyDetector(self.sensor_grid, dark_current_rate=14.40, read_noise=4.76)
+
+    def image_pipeline(
+        self,
+        img,
+        angle=0.0,
+        crop_box=None,
+        shift=(0, 0),
+        resize_rotate=True,
+        fill_value=0,
+    ):
+        """
+        Pipeline para procesar una imagen con:
+        1. Rotación
+        2. Crop
+        3. Desplazamiento
+
+        Parámetros
+        ----------
+        img : np.ndarray
+            Imagen cargada con skimage.io.imread().
+
+        angle : float
+            Ángulo de rotación en grados.
+
+        crop_box : tuple | None
+            Caja de crop en formato (x1, y1, x2, y2).
+            Si es None, no aplica crop.
+
+        shift : tuple
+            Desplazamiento en formato (dx, dy).
+            dx > 0 mueve a la derecha.
+            dy > 0 mueve hacia abajo.
+
+        resize_rotate : bool
+            Si True, agranda el canvas al rotar para evitar recorte.
+
+        fill_value : int | float
+            Valor para rellenar zonas vacías.
+
+        Retorna
+        -------
+        np.ndarray
+            Imagen procesada.
+        """
+
+        original_dtype = img.dtype
+
+        # 1. Rotación
+        if angle != 0:
+            img = rotate(
+                img,
+                angle=angle,
+                resize=resize_rotate,
+                preserve_range=True,
+                mode="constant",
+                cval=fill_value,
+            )
+
+        # 2. Crop
+        if crop_box is not None:
+            x1, y1, x2, y2 = crop_box
+            img = img[y1:y2, x1:x2]
+
+        # 3. Desplazamiento
+        dx, dy = shift
+
+        if dx != 0 or dy != 0:
+            tform = AffineTransform(translation=(dx, dy))
+
+            img = warp(
+                img,
+                inverse_map=tform.inverse,
+                preserve_range=True,
+                mode="constant",
+                cval=fill_value,
+            )
+
+        return img.astype(original_dtype)
